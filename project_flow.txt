@@ -1,0 +1,17 @@
+Step 1. Create Strategy in strategies and backtest, save backtest orders in csv, analyze orders, finalize strategy, save strategy in database, add it to main.py for api to use
+Step 2. On the dashboard see all the strategies, create portfolio -> select strategy -> stocks, backtest portfolio, paper trading, deploy for actual trading
+step 3. show dashboard page with active portfolios
+step 4. show dashboard page with paper trading portfolios
+step 5. show dashboard page with backtested strategies
+step 7. dashboard portfolio page, showing chart with buy and sell markers, orders table with orders placed
+
+Most simple and low risk strategy
+- create a strategy that will analyze 5 equity stocks data
+- measure technical indicators and identify signals
+- use kernel method to create a signal
+- get real-time news sentiment
+- create llm prompt with llm's goal, portfolio value, current position, each stock with its ohlcv data, technical indicators, kernel method signal, news sentiment
+- llm output in json to buy or sell orders with stop loss, target, entry/exit price, note about current situation and expectation
+- place orders save orders in database with flag real order, virtual, backtest
+
+

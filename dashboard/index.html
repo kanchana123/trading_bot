@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TradingBot</title>
+  <style>
+    :root {
+      --bg: #111318;
+      --panel: #1b1e27;
+      --line: #2a2e3a;
+      --text: #eceef3;
+      --muted: #9aa3b5;
+      --accent: #6ea8fe;
+      --ok: #3dd68c;
+      --warn: #f5c26b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+    }
+    h1 { margin: 0; font-size: 20px; }
+    main { padding: 24px; display: grid; gap: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    h2 { margin: 0 0 12px; font-size: 15px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+    input, select, textarea, button {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #12141b;
+      color: var(--text);
+    }
+    button {
+      margin-top: 12px;
+      background: var(--accent);
+      color: #0b1220;
+      border: 0;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+    .muted { color: var(--muted); font-size: 13px; }
+    .status { font-size: 13px; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .key { max-width: 280px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>TradingBot</h1>
+      <div id="health" class="muted">Checking API…</div>
+    </div>
+    <div class="key">
+      <label for="apiKey">API key (X-API-Key)</label>
+      <input id="apiKey" type="password" placeholder="Required if TRADING_BOT_API_KEY is set" />
+    </div>
+  </header>
+  <main>
+    <div class="grid">
+      <section>
+        <h2>Create strategy</h2>
+        <label>Instance name</label>
+        <input id="strategyName" placeholder="My Bollinger" />
+        <label>Class</label>
+        <select id="strategyClass"></select>
+        <label>Params JSON</label>
+        <textarea id="strategyParams" rows="4">{"window":20,"std_multiplier":2}</textarea>
+        <button onclick="createStrategy()">Save strategy</button>
+      </section>
+      <section>
+        <h2>Run backtest</h2>
+        <label>Strategy ID</label>
+        <input id="btStrategyId" type="number" />
+        <label>Stock</label>
+        <input id="btStock" value="ICICIBANK-EQ" />
+        <label>Start / end</label>
+        <input id="btStart" placeholder="YYYY-MM-DD" />
+        <input id="btEnd" placeholder="YYYY-MM-DD" />
+        <label>Portfolio name / value</label>
+        <input id="btName" placeholder="Backtest 1" />
+        <input id="btValue" type="number" value="100000" />
+        <label>Interval</label>
+        <select id="btInterval">
+          <option>ONE_DAY</option>
+          <option>FIFTEEN_MINUTE</option>
+          <option>FIVE_MINUTE</option>
+          <option>ONE_MINUTE</option>
+        </select>
+        <button onclick="runBacktest()">Run backtest</button>
+      </section>
+      <section>
+        <h2>Realtime</h2>
+        <button onclick="call('POST','/api/realtime/start')">Start trader</button>
+        <button onclick="call('POST','/api/realtime/stop')">Stop trader</button>
+        <p class="muted">Activate a KernelMomentum deployment after creating a portfolio from a backtest.</p>
+      </section>
+    </div>
+    <section>
+      <h2>Strategies</h2>
+      <div id="strategies" class="muted">Loading…</div>
+    </section>
+    <section>
+      <h2>Portfolios</h2>
+      <div id="portfolios" class="muted">Loading…</div>
+    </section>
+    <section>
+      <h2>Orders</h2>
+      <div id="orders" class="muted">Loading…</div>
+    </section>
+    <section>
+      <h2>Deployments</h2>
+      <div id="deployments" class="muted">Loading…</div>
+    </section>
+    <p id="message" class="status"></p>
+  </main>
+  <script>
+    const headers = () => {
+      const key = document.getElementById("apiKey").value.trim();
+      const h = { "Content-Type": "application/json" };
+      if (key) h["X-API-Key"] = key;
+      return h;
+    };
+    async function api(path, options = {}) {
+      const res = await fetch(path, { ...options, headers: { ...headers(), ...(options.headers || {}) } });
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if (!res.ok) throw new Error(typeof data === "string" ? data : (data.detail || res.statusText));
+      return data;
+    }
+    function table(headers, rows) {
+      if (!rows.length) return '<p class="muted">None yet.</p>';
+      return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
+    }
+    function show(msg, ok = true) {
+      const el = document.getElementById("message");
+      el.className = "status " + (ok ? "ok" : "warn");
+      el.textContent = msg;
+    }
+    async function refresh() {
+      const [classes, strategies, portfolios, orders, deployments, health] = await Promise.all([
+        api("/api/strategies/objects"),
+        api("/api/strategies/db"),
+        api("/api/portfolios"),
+        api("/api/orders"),
+        api("/api/deployments"),
+        api("/api/health"),
+      ]);
+      document.getElementById("health").innerHTML =
+        `Angel session: <span class="${health.angel_session ? "ok" : "warn"}">${health.angel_session}</span>
+         · realtime: <span class="${health.realtime_running ? "ok" : "warn"}">${health.realtime_running}</span>
+         · API key required: ${health.api_key_required}`;
+      const classSelect = document.getElementById("strategyClass");
+      classSelect.innerHTML = classes.map(c => `<option>${c}</option>`).join("");
+      document.getElementById("strategies").innerHTML = table(
+        ["ID", "Name", "Class", "Params"],
+        strategies.map(s => `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.strategy_class_name || ""}</td><td>${JSON.stringify(s.params || {})}</td></tr>`)
+      );
+      document.getElementById("portfolios").innerHTML = table(
+        ["ID", "Name", "Strategy", "Start", "End", "Stock"],
+        portfolios.map(p => `<tr><td>${p.id}</td><td>${p.name}</td><td>${p.strategy_id}</td><td>${p.starting_value}</td><td>${p.end_value ?? ""}</td><td>${p.stock || ""}</td></tr>`)
+      );
+      document.getElementById("orders").innerHTML = table(
+        ["ID", "Portfolio", "Type", "Side", "Qty", "Price", "Time"],
+        orders.slice(-50).reverse().map(o => `<tr><td>${o.id}</td><td>${o.portfolio_id}</td><td>${o.order_type}</td><td>${o.transaction_type}</td><td>${o.quantity}</td><td>${o.price}</td><td>${o.timestamp}</td></tr>`)
+      );
+      document.getElementById("deployments").innerHTML = table(
+        ["ID", "Portfolio", "Strategy", "Mode", "Active"],
+        deployments.map(d => `<tr><td>${d.id}</td><td>${d.portfolio_id}</td><td>${d.strategy_id}</td><td>${d.trading_mode}</td><td>${d.is_active}</td></tr>`)
+      );
+    }
+    async function createStrategy() {
+      try {
+        const params = JSON.parse(document.getElementById("strategyParams").value || "{}");
+        const data = await api("/api/strategies/create", {
+          method: "POST",
+          body: JSON.stringify({
+            name: document.getElementById("strategyName").value,
+            strategy_class: document.getElementById("strategyClass").value,
+            params,
+          }),
+        });
+        show("Created strategy " + data.strategy_id);
+        refresh();
+      } catch (e) { show(e.message, false); }
+    }
+    async function runBacktest() {
+      try {
+        const data = await api("/api/backtest", {
+          method: "POST",
+          body: JSON.stringify({
+            strategy_id: Number(document.getElementById("btStrategyId").value),
+            stock: document.getElementById("btStock").value,
+            start_date: document.getElementById("btStart").value,
+            end_date: document.getElementById("btEnd").value,
+            portfolio_name: document.getElementById("btName").value,
+            portfolio_value: Number(document.getElementById("btValue").value),
+            interval: document.getElementById("btInterval").value,
+          }),
+        });
+        show(`Backtest portfolio ${data.portfolio_id}: ${data.orders_count} orders, final ${data.final_value}`);
+        refresh();
+      } catch (e) { show(e.message, false); }
+    }
+    async function call(method, path) {
+      try {
+        const data = await api(path, { method });
+        show(data.message || JSON.stringify(data));
+        refresh();
+      } catch (e) { show(e.message, false); }
+    }
+    refresh().catch(e => show(e.message, false));
+  </script>
+</body>
+</html>
