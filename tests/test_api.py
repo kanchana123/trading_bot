@@ -28,6 +28,15 @@ def client(tmp_path, monkeypatch):
     main.orders_manager = OrdersManager(db)
     main.deployment_manager = DeploymentManager(db)
     main.trade_executor = TradeExecutor(main.orders_manager, main.angel_api_http_client)
+    from agents.service import InvestmentGraphService
+    from api.v2_routes import bind_service
+    from db.audit_manager import AuditLedger
+
+    main.audit_ledger = AuditLedger(db)
+    main.graph_service = InvestmentGraphService(
+        main.trade_executor, main.audit_ledger, main.angel_api_http_client
+    )
+    bind_service(main.graph_service)
 
     with TestClient(main.app) as test_client:
         yield test_client

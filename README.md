@@ -19,73 +19,99 @@ The running product is a FastAPI server, a SQLite store, and a static dashboard.
 - Historical backtest via Angel candle API; orders and `end_value` persisted on a portfolio
 - Virtual (paper) and real deployments on websocket ticks
 - Static dashboard at `/` to create strategies, run backtests, and inspect orders
+- React investment desk at `/ui/` (Vite `web/` on port 3000 in dev) with Desk and **How it works** menus
 - Optional `X-API-Key` on mutating routes; real trading requires that key plus an active Angel session
 
-## System design
+## Architecture
 
-High-level components and how they talk to Angel One and SQLite:
+Clients talk only to FastAPI. The v2 graph can retrieve and propose; `TradeExecutor` is the only path that writes a fill. Models never call Angel.
 
 ```mermaid
 flowchart TB
   subgraph clients [Clients]
-    Dash[Dashboard /]
-    HttpClient[HTTP client]
+    Desk["React investment desk /ui/"]
+    Dash["Static dashboard /"]
+    Cli[HTTP client]
   end
 
-  subgraph api [FastAPI - main.py]
-    Routes[REST /api/*]
-    Auth[X-API-Key guard]
+  subgraph fastapi [FastAPI main.py]
+    Auth[X-API-Key]
+    V1["v1 REST<br/>strategies backtest deploy realtime"]
+    V2["v2 REST + SSE<br/>runs pending approve reject"]
   end
 
-  subgraph domain [Domain]
+  subgraph v2stack [V2 investment graph]
+    direction TB
+    Research[research]
+    Quant[quant]
+    Risk[risk]
+    Adj[adjudicator]
+    PolicyN[policy]
+    HITL[HITL interrupt]
+    ExecN[execute_order]
+    Research --> Quant --> Risk --> Adj --> PolicyN --> HITL
+    HITL -->|approve| ExecN
+    HITL -->|reject| Stop[run ended]
+  end
+
+  subgraph v2support [V2 layers]
+    RAG["RAG corpus BM25 + dense reranker"]
+    GOV["PolicyEngine + guardrails"]
+    Trace[Tracing]
+    Audit[AuditLedger]
+  end
+
+  subgraph classic [Classic trading]
     SM[StrategyManager]
-    PM[PortfolioManager]
-    OM[OrdersManager]
-    DM[DeploymentManager]
     BT[Backtest]
     RT[RealtimeTrader]
+    ST["BollingerBand / KernelMomentum"]
+  end
+
+  subgraph shared [Shared execution and store]
     EX[TradeExecutor]
+    DB[(SQLite)]
   end
 
-  subgraph strategies [Strategies]
-    BB[BollingerBand - backtest]
-    KM[KernelMomentum - backtest + RT]
+  subgraph angel [Angel One]
+    REST[SmartConnect REST]
+    WS[SmartWebSocket]
   end
 
-  subgraph persistence [Local store]
-    DB[(SQLite trading_bot.db)]
-  end
-
-  subgraph broker [Angel One]
-    HTTP[SmartConnect REST]
-    WS[SmartWebSocket ticks]
-  end
-
-  Dash --> Routes
-  HttpClient --> Routes
-  Routes --> Auth
-  Auth --> SM
-  Auth --> PM
-  Auth --> OM
-  Auth --> DM
-  Auth --> BT
-  Auth --> RT
-  SM --> DB
-  PM --> DB
-  OM --> DB
-  DM --> DB
-  BT --> BB
-  BT --> KM
-  BT --> HTTP
-  BT --> OM
-  RT --> KM
-  RT --> WS
+  Desk --> V2
+  Dash --> V1
+  Dash --> V2
+  Cli --> Auth
+  Auth --> V1
+  Auth --> V2
+  V2 --> Research
+  Research --> RAG
+  Quant --> ST
+  PolicyN --> GOV
+  Research --> Trace
+  ExecN --> Audit
+  ExecN --> EX
+  V1 --> SM
+  V1 --> BT
+  V1 --> RT
+  BT --> ST
+  RT --> ST
   RT --> EX
-  EX --> OM
-  EX --> HTTP
-  HTTP --> broker
-  WS --> broker
+  SM --> DB
+  BT --> DB
+  RT --> DB
+  EX --> DB
+  Audit --> DB
+  BT --> REST
+  EX --> REST
+  RT --> WS
 ```
+
+`execute_order` and the live trader share `TradeExecutor`. Virtual fills stay in SQLite; real fills call Angel `placeOrder` immediately.
+
+## System design
+
+Classic backtest and realtime paths in more detail:
 
 ### Backtest flow
 
@@ -261,7 +287,15 @@ pytest
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
 | GET | `/` | no | Dashboard |
-| GET | `/api/health` | no | Angel session + realtime running + whether API key is required |
+| GET | `/api/health` | no | Angel session, realtime, API key flag, `v2`, `llm_can_execute=false` |
+| GET | `/api/v2/meta` | no | Graph edges, LangGraph availability, interrupt_before execute_order |
+| POST | `/api/v2/runs` | yes | Start research→quant→risk→adjudicator→policy; always pauses before execute |
+| GET | `/api/v2/runs` | no | Audit ledger summaries |
+| GET | `/api/v2/runs/pending` | no | HITL approval queue |
+| GET | `/api/v2/runs/{id}` | no | Full state, proposal, policy, traces |
+| GET | `/api/v2/runs/{id}/events` | no | SSE of node thoughts |
+| POST | `/api/v2/runs/{id}/approve` | yes | `{operator_id}` then TradeExecutor paper/real |
+| POST | `/api/v2/runs/{id}/reject` | yes | `{operator_id}` |
 | GET | `/api/strategies/objects` | no | `BollingerBand`, `KernelMomentum` |
 | POST | `/api/strategies/create` | yes | `{name, strategy_class, params}` |
 | GET | `/api/strategies/db` | no | Saved instances |
@@ -286,6 +320,77 @@ Auth = `X-API-Key` when `TRADING_BOT_API_KEY` is set. If that env var is empty, 
 **Realtime** (`strategies/base_strategy_rt.py`): implement `on_new_tick` (return a trade dict or `None`). Register in `STRATEGY_CLASS_MAP` in `realtime/realtime_trader.py`. Position size should change only in `confirm_fill` after `TradeExecutor` succeeds.
 
 OHLC columns are normalized to `Open` / `High` / `Low` / `Close` / `Volume` before indicators run.
+
+## How it works
+
+Open **How it works** on the React desk (`/ui/` or `http://127.0.0.1:3000`) or on the static dashboard (`/`). Models retrieve and propose; they never call the broker. A deterministic policy engine and a human sit in front of every fill.
+
+```mermaid
+flowchart LR
+  R[Research] --> Q[Quant]
+  Q --> K[Risk]
+  K --> A[Adjudicator]
+  A --> P[Policy]
+  P --> H[HITL pause]
+  H -->|approve| E[Execute via TradeExecutor]
+  H -->|reject| X[Run ended]
+```
+
+1. **Research** retrieves fixture 10-K / 10-Q / news chunks for the symbol (hybrid BM25 + dense search, then a reranker). The summary must be grounded in those excerpts. Prompt-injection style text is screened out.
+2. **Quant** runs Kernel momentum and Bollinger band logic on completed bars and emits structured signals, not broker calls.
+3. **Risk** scores concentration, historical VaR, drawdown, circuit-breaker returns, and whether research was grounded.
+4. **Adjudicator** merges those inputs into one order proposal (side, quantity, limit, rationale, citations) or rejects with a typed reason.
+5. **Policy** is rule-based: about 5% of NAV in one name, stop-loss bound, VaR cap, drawdown cap, cash check. A model cannot override this.
+6. **HITL** always pauses before `execute_order`. Real mode requires an operator. This build also pauses paper mode so you can inspect the proposal.
+7. **Execute** is the only node allowed to call `TradeExecutor`, and only after policy is replayed.
+
+**Approve runs immediately.** It does not wait for the next trading day and does not place an AMO / GTD / overnight delivery order.
+
+- **Virtual (paper)** writes a SQLite row with `order_type=virtual`. Angel is not contacted.
+- **Real** calls Angel `placeOrder` now as LIMIT / INTRADAY if the session is live. A closed market or bad token is a broker reject, not a next-session queue.
+
+Fixture research exists for `RELIANCE-EQ` and `ICICIBANK-EQ`. Start a run from the desk, inspect citations and policy in the inspector, then approve or reject from the queue. Audit rows replay the graph snapshot.
+
+## V2 multi-agent graph
+
+`agents/graph.py` implements the flow above. Policy lives in `governance/policy_engine.py`. Execution is `interrupt_before=["execute_order"]`. Only `agents/nodes/execution_node.py` may call `TradeExecutor`; it re-runs policy and requires an operator id for real mode.
+
+```mermaid
+flowchart LR
+  subgraph research [Research]
+    Tools[rag/tools]
+    Store[vector_store]
+    Rank[reranker]
+    Corpus[fixture 10-K / 10-Q / news]
+    Tools --> Store
+    Store --> Rank
+    Corpus --> Store
+  end
+
+  subgraph quant [Quant]
+    Kernel[KernelMomentum]
+    BB[BollingerBand]
+  end
+
+  subgraph decision [Decision]
+    RiskN[risk_agent]
+    AdjN[adjudicator]
+    PolN[policy_node]
+    Engine[PolicyEngine]
+    PolN --> Engine
+  end
+
+  subgraph exec [Execution]
+    HITL2[operator approve / reject]
+    Node[execution_node]
+    TE[TradeExecutor]
+    Node --> TE
+  end
+
+  research --> quant --> RiskN --> AdjN --> PolN --> HITL2 --> Node
+```
+
+Dashboard `/` is the original static console (Desk + How it works). The React investment desk is `web/` — `npm install && npm run dev` on port 3000 (proxies `/api`), or `npm run build` and open `/ui/` on the FastAPI server.
 
 ## LLM equity script
 

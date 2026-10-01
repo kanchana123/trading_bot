@@ -7,6 +7,7 @@ import os
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -29,6 +30,9 @@ from base_models.backtest import Backtest
 from base_models.angel_api import AngelAPI
 from realtime.realtime_trader import RealtimeTrader, STRATEGY_CLASS_MAP as RT_STRATEGY_CLASS_MAP
 from realtime.trade_executor import TradeExecutor
+from api.v2_routes import bind_service, router as v2_router
+from agents.service import InvestmentGraphService
+from db.audit_manager import AuditLedger
 
 BACKTEST_STRATEGY_CLASSES = {
     "BollingerBand": BollingerBandStrategy,
@@ -74,6 +78,13 @@ realtime_trader_instance: Optional[RealtimeTrader] = RealtimeTrader(
     trade_executor=trade_executor,
     angel_api_http_client=angel_api_http_client,
 )
+audit_ledger = AuditLedger()
+graph_service = InvestmentGraphService(
+    trade_executor=trade_executor,
+    audit=audit_ledger,
+    angel_api=angel_api_http_client,
+)
+bind_service(graph_service)
 
 
 @asynccontextmanager
@@ -99,6 +110,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(v2_router, prefix="/api/v2")
 
 
 class StrategyCreate(BaseModel):
@@ -152,6 +164,8 @@ async def health():
             realtime_trader_instance and realtime_trader_instance._is_running
         ),
         "api_key_required": bool(os.getenv("TRADING_BOT_API_KEY")),
+        "v2": True,
+        "llm_can_execute": False,
     }
 
 
@@ -428,6 +442,9 @@ async def stop_realtime_trader():
 
 DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard")
 DASHBOARD_INDEX = os.path.join(DASHBOARD_DIR, "index.html")
+WEB_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "dist")
+if os.path.isdir(WEB_DIST) and os.path.isfile(os.path.join(WEB_DIST, "index.html")):
+    app.mount("/ui", StaticFiles(directory=WEB_DIST, html=True), name="web_ui")
 if os.path.isfile(DASHBOARD_INDEX):
     @app.get("/")
     async def dashboard_index():

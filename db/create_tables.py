@@ -107,6 +107,36 @@ def create_database(db_name: str = DEFAULT_DB_PATH):
                 """
             )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            run_id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            trading_mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            prompt_version TEXT,
+            state_json TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            node TEXT,
+            kind TEXT,
+            message TEXT,
+            payload TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
+        )
+        """
+    )
+
     conn.commit()
     conn.close()
 
