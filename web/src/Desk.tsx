@@ -1,6 +1,7 @@
 import type { FormEvent } from "react";
 import HowItWorks from "./HowItWorks";
 import { GRAPH_NODES } from "./types";
+import { API_UNAVAILABLE, looksLikeHtml } from "./api";
 import type { AuditRow, GraphEdge, Health, PendingRow, RunDump } from "./types";
 
 type Props = {
@@ -115,7 +116,9 @@ export default function Desk(props: Props) {
         <button type="submit" disabled={props.busy}>
           {props.busy ? "Running graph…" : "Start run"}
         </button>
-        <p className={props.noticeOk ? "notice ok" : "notice warn"}>{props.notice}</p>
+        <p className={props.noticeOk ? "notice ok" : "notice warn"}>
+          {looksLikeHtml(props.notice) ? API_UNAVAILABLE : props.notice}
+        </p>
       </form>
 
       <section className="rail">

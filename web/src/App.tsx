@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, getApiKey, getOperator, isApiUnavailable, setApiKey, setOperator } from "./api";
+import { api, API_UNAVAILABLE, getApiKey, getOperator, isApiUnavailable, isStaticHost, publicError, setApiKey, setOperator } from "./api";
 import Desk from "./Desk";
 import "./styles.css";
 import type { AuditRow, GraphEdge, Health, PendingRow, RunDump } from "./types";
@@ -16,16 +16,21 @@ export default function App() {
   const [cash, setCash] = useState("100000");
   const [mode, setMode] = useState<"virtual" | "real">("virtual");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("Ready.");
-  const [noticeOk, setNoticeOk] = useState(true);
+  const [notice, setNotice] = useState(() =>
+    typeof window !== "undefined" && isStaticHost() ? API_UNAVAILABLE : "Ready."
+  );
+  const [noticeOk, setNoticeOk] = useState(() => !(typeof window !== "undefined" && isStaticHost()));
   const [view, setView] = useState<"desk" | "how-it-works">("desk");
 
   const show = (msg: string, ok = true) => {
-    setNotice(msg);
+    setNotice(publicError(msg));
     setNoticeOk(ok);
   };
 
   const refresh = useCallback(async () => {
+    if (isStaticHost()) {
+      throw new Error(API_UNAVAILABLE);
+    }
     const [meta, queue, history, healthBody] = await Promise.all([
       api<{ graph_edges: GraphEdge[] }>("/api/v2/meta"),
       api<PendingRow[]>("/api/v2/runs/pending"),
@@ -41,7 +46,7 @@ export default function App() {
   useEffect(() => {
     let live = true;
     refresh().catch((err: Error) => {
-      show(err.message, false);
+      show(publicError(err), false);
       if (isApiUnavailable(err)) live = false;
     });
     const timer = window.setInterval(() => {
@@ -87,7 +92,7 @@ export default function App() {
       );
       await refresh();
     } catch (err) {
-      show(err instanceof Error ? err.message : String(err), false);
+      show(publicError(err), false);
     } finally {
       setBusy(false);
     }
@@ -104,7 +109,7 @@ export default function App() {
       show(`${action} → ${dump.status}`);
       await refresh();
     } catch (err) {
-      show(err instanceof Error ? err.message : String(err), false);
+      show(publicError(err), false);
     } finally {
       setBusy(false);
     }
@@ -132,7 +137,7 @@ export default function App() {
       pending={pending}
       audit={audit}
       selected={selected}
-      onSelect={(id) => loadRun(id).catch((err: Error) => show(err.message, false))}
+      onSelect={(id) => loadRun(id).catch((err: Error) => show(publicError(err), false))}
       onDecide={onDecide}
       view={view}
       onView={setView}

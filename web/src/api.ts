@@ -4,18 +4,31 @@ const OPERATOR = "tb-operator";
 export const API_UNAVAILABLE =
   "No trading API on this host. How it works is static; run FastAPI locally for live runs.";
 
+export function isStaticHost() {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host.endsWith("github.io") || host === "kanchana123.github.io";
+}
+
 export function isApiUnavailable(err: unknown) {
   return err instanceof Error && err.message === API_UNAVAILABLE;
 }
 
-function looksLikeHtml(text: string) {
-  const head = text.trimStart().slice(0, 240).toLowerCase();
+export function looksLikeHtml(text: string) {
+  const head = text.trimStart().slice(0, 400).toLowerCase();
   return (
     head.startsWith("<!doctype") ||
     head.startsWith("<html") ||
+    head.includes("<head>") ||
     head.includes("github pages") ||
     head.includes("file not found")
   );
+}
+
+export function publicError(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (looksLikeHtml(msg) || msg.length > 220) return API_UNAVAILABLE;
+  return msg;
 }
 
 export function getApiKey() {
@@ -50,13 +63,16 @@ function detail(data: unknown, fallback: string) {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const base = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+  if (isStaticHost() && !base) {
+    throw new Error(API_UNAVAILABLE);
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(init.headers as Record<string, string> | undefined),
   };
   const key = getApiKey().trim();
   if (key) headers["X-API-Key"] = key;
-  const base = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
   const res = await fetch(`${base}${path}`, { ...init, headers });
   const text = await res.text();
   const contentType = res.headers.get("content-type") || "";
@@ -67,7 +83,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    data = text;
+    throw new Error(API_UNAVAILABLE);
   }
   if (!res.ok) throw new Error(detail(data, res.statusText));
   return data as T;
