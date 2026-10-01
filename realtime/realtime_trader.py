@@ -6,16 +6,13 @@ from typing import Dict, List, Optional
 from db.deployment_manager import DeploymentManager
 from db.orders_manager import OrdersManager
 from db.strategy_manager import StrategyManager
+from db.portfolio_manager import PortfolioManager
 from realtime.angel_websocket_client import AngelWebSocketClient
 from realtime.trade_executor import TradeExecutor
 from base_models.angel_api import AngelAPI
-from strategies.action_price.KernelTrader import KernelStrategy
+from strategies.registry import STRATEGY_CLASS_MAP
 
 logger = logging.getLogger(__name__)
-
-STRATEGY_CLASS_MAP = {
-    "KernelMomentum": KernelStrategy,
-}
 
 
 class RealtimeTrader:
@@ -26,12 +23,14 @@ class RealtimeTrader:
         orders_manager: OrdersManager,
         trade_executor: TradeExecutor,
         angel_api_http_client: AngelAPI,
+        portfolio_manager: Optional[PortfolioManager] = None,
     ):
         self.deployment_manager = deployment_manager
         self.strategy_manager = strategy_manager
         self.orders_manager = orders_manager
         self.trade_executor = trade_executor
         self.angel_api_http_client = angel_api_http_client
+        self.portfolio_manager = portfolio_manager
 
         self.ws_client: Optional[AngelWebSocketClient] = None
         self.active_deployments: List[Dict] = []
@@ -150,7 +149,11 @@ class RealtimeTrader:
                     strategy_details_db.get("strategy_class_name")
                     or strategy_details_db.get("name")
                 )
-                strat_params = strategy_details_db.get("params")
+                strat_params = dict(strategy_details_db.get("params") or {})
+                if self.portfolio_manager:
+                    portfolio = self.portfolio_manager.get_portfolio(portfolio_id)
+                    if portfolio and portfolio[3] is not None:
+                        strat_params.setdefault("capital", float(portfolio[3]))
                 StrategyClass = STRATEGY_CLASS_MAP.get(strategy_name_db)
                 if not StrategyClass:
                     logger.error(

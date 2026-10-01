@@ -18,8 +18,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from strategies.bollingerBandStrategy import BollingerBandStrategy
-from strategies.action_price.KernelTrader import KernelBacktestAdapter
+from strategies.registry import (
+    BACKTEST_STRATEGY_CLASSES,
+    STRATEGY_CATALOG,
+    catalog_payload,
+    supports_realtime,
+)
 from db.strategy_manager import StrategyManager
 from db.portfolio_manager import PortfolioManager
 from db.orders_manager import OrdersManager
@@ -27,13 +31,8 @@ from db.deployment_manager import DeploymentManager
 from db.create_tables import create_database
 from base_models.backtest import Backtest
 from base_models.angel_api import AngelAPI
-from realtime.realtime_trader import RealtimeTrader, STRATEGY_CLASS_MAP as RT_STRATEGY_CLASS_MAP
+from realtime.realtime_trader import RealtimeTrader
 from realtime.trade_executor import TradeExecutor
-
-BACKTEST_STRATEGY_CLASSES = {
-    "BollingerBand": BollingerBandStrategy,
-    "KernelMomentum": KernelBacktestAdapter,
-}
 
 
 def build_backtest_strategy(class_name: str, params: Optional[Dict] = None):
@@ -73,6 +72,7 @@ realtime_trader_instance: Optional[RealtimeTrader] = RealtimeTrader(
     orders_manager=orders_manager,
     trade_executor=trade_executor,
     angel_api_http_client=angel_api_http_client,
+    portfolio_manager=portfolio_manager,
 )
 
 
@@ -152,6 +152,7 @@ async def health():
             realtime_trader_instance and realtime_trader_instance._is_running
         ),
         "api_key_required": bool(os.getenv("TRADING_BOT_API_KEY")),
+        "strategies": list(BACKTEST_STRATEGY_CLASSES.keys()),
     }
 
 
@@ -160,20 +161,27 @@ async def get_strategy_objects():
     return list(BACKTEST_STRATEGY_CLASSES.keys())
 
 
+@app.get("/api/strategies/catalog")
+async def get_strategy_catalog():
+    return catalog_payload()
+
+
 @app.post("/api/strategies/create", dependencies=[Depends(require_api_key)])
 async def create_strategy_db(strategy_data: StrategyCreate):
     class_key = strategy_data.class_key()
     if class_key not in BACKTEST_STRATEGY_CLASSES:
         raise HTTPException(status_code=400, detail="Invalid strategy name")
     try:
-        strategy_object = build_backtest_strategy(class_key, strategy_data.params)
+        defaults = dict(STRATEGY_CATALOG.get(class_key, {}).get("default_params") or {})
+        merged_params = {**defaults, **(strategy_data.params or {})}
+        strategy_object = build_backtest_strategy(class_key, merged_params)
         strategy_id = strategy_manager.create_strategy(
             name=strategy_data.instance_name(),
             desc=strategy_object.generate_desc()
             if hasattr(strategy_object, "generate_desc")
             else getattr(strategy_object, "desc", ""),
             strategy_class_name=class_key,
-            params=strategy_data.params or {},
+            params=merged_params,
         )
         return {"strategy_id": strategy_id}
     except Exception as e:
@@ -304,7 +312,7 @@ async def create_new_deployment(deployment_data: DeploymentCreate):
         )
 
     strategy_name_from_db = db_strategy.get("strategy_class_name") or db_strategy.get("name")
-    if strategy_name_from_db not in RT_STRATEGY_CLASS_MAP:
+    if not supports_realtime(strategy_name_from_db):
         raise HTTPException(
             status_code=400,
             detail=f"Strategy '{strategy_name_from_db}' is not configured for real-time trading.",

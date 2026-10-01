@@ -81,12 +81,13 @@
     <div class="grid">
       <section>
         <h2>Create strategy</h2>
+        <p id="strategyHint" class="muted">Each catalog strategy can backtest, paper-trade, and live-trade.</p>
         <label>Instance name</label>
         <input id="strategyName" placeholder="My Bollinger" />
         <label>Class</label>
-        <select id="strategyClass"></select>
+        <select id="strategyClass" onchange="fillDefaultParams()"></select>
         <label>Params JSON</label>
-        <textarea id="strategyParams" rows="4">{"window":20,"std_multiplier":2}</textarea>
+        <textarea id="strategyParams" rows="6">{}</textarea>
         <button onclick="createStrategy()">Save strategy</button>
       </section>
       <section>
@@ -111,10 +112,33 @@
         <button onclick="runBacktest()">Run backtest</button>
       </section>
       <section>
+        <h2>Deploy (paper or live)</h2>
+        <label>Portfolio ID</label>
+        <input id="depPortfolioId" type="number" />
+        <label>Strategy ID</label>
+        <input id="depStrategyId" type="number" />
+        <label>Instrument token</label>
+        <input id="depToken" placeholder="2885" />
+        <label>Symbol</label>
+        <input id="depSymbol" value="RELIANCE-EQ" />
+        <label>Exchange</label>
+        <input id="depExchange" value="NSE_EQ" />
+        <label>Mode</label>
+        <select id="depMode">
+          <option value="virtual">virtual (paper)</option>
+          <option value="real">real</option>
+        </select>
+        <label>
+          <input id="depActivate" type="checkbox" style="width:auto" />
+          Activate after create
+        </label>
+        <button onclick="createDeployment()">Create deployment</button>
+      </section>
+      <section>
         <h2>Realtime</h2>
         <button onclick="call('POST','/api/realtime/start')">Start trader</button>
         <button onclick="call('POST','/api/realtime/stop')">Stop trader</button>
-        <p class="muted">Activate a KernelMomentum deployment after creating a portfolio from a backtest.</p>
+        <p class="muted">Create a strategy, backtest it to get a portfolio, then deploy that pair in virtual or real mode and start the trader.</p>
       </section>
     </div>
     <section>
@@ -159,21 +183,43 @@
       el.className = "status " + (ok ? "ok" : "warn");
       el.textContent = msg;
     }
+    let catalog = [];
+    function fillDefaultParams() {
+      const selected = document.getElementById("strategyClass").value;
+      const spec = catalog.find(c => c.name === selected);
+      document.getElementById("strategyParams").value = JSON.stringify(
+        (spec && spec.default_params) || {},
+        null,
+        2
+      );
+      const modes = spec && spec.modes ? spec.modes.join(", ") : "";
+      document.getElementById("strategyHint").textContent = spec
+        ? `${spec.label} — modes: ${modes}`
+        : "";
+    }
     async function refresh() {
-      const [classes, strategies, portfolios, orders, deployments, health] = await Promise.all([
-        api("/api/strategies/objects"),
+      const [catalogData, strategies, portfolios, orders, deployments, health] = await Promise.all([
+        api("/api/strategies/catalog"),
         api("/api/strategies/db"),
         api("/api/portfolios"),
         api("/api/orders"),
         api("/api/deployments"),
         api("/api/health"),
       ]);
+      catalog = catalogData;
       document.getElementById("health").innerHTML =
         `Angel session: <span class="${health.angel_session ? "ok" : "warn"}">${health.angel_session}</span>
          · realtime: <span class="${health.realtime_running ? "ok" : "warn"}">${health.realtime_running}</span>
          · API key required: ${health.api_key_required}`;
       const classSelect = document.getElementById("strategyClass");
-      classSelect.innerHTML = classes.map(c => `<option>${c}</option>`).join("");
+      const prev = classSelect.value;
+      classSelect.innerHTML = catalog.map(c =>
+        `<option value="${c.name}">${c.name} (${c.modes.join("/")})</option>`
+      ).join("");
+      if ([...classSelect.options].some(o => o.value === prev)) classSelect.value = prev;
+      if (!document.getElementById("strategyParams").value.trim() || document.getElementById("strategyParams").value.trim() === "{}") {
+        fillDefaultParams();
+      }
       document.getElementById("strategies").innerHTML = table(
         ["ID", "Name", "Class", "Params"],
         strategies.map(s => `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.strategy_class_name || ""}</td><td>${JSON.stringify(s.params || {})}</td></tr>`)
@@ -221,6 +267,30 @@
           }),
         });
         show(`Backtest portfolio ${data.portfolio_id}: ${data.orders_count} orders, final ${data.final_value}`);
+        refresh();
+      } catch (e) { show(e.message, false); }
+    }
+    async function createDeployment() {
+      try {
+        const data = await api("/api/deployments", {
+          method: "POST",
+          body: JSON.stringify({
+            portfolio_id: Number(document.getElementById("depPortfolioId").value),
+            strategy_id: Number(document.getElementById("depStrategyId").value),
+            token_subscriptions: [{
+              instrumentToken: document.getElementById("depToken").value,
+              symbol: document.getElementById("depSymbol").value,
+              exchange: document.getElementById("depExchange").value,
+            }],
+            trading_mode: document.getElementById("depMode").value,
+          }),
+        });
+        if (document.getElementById("depActivate").checked && data.deployment_id) {
+          await api(`/api/deployments/${data.deployment_id}/activate`, { method: "PUT" });
+          show(`Deployment ${data.deployment_id} created and activated`);
+        } else {
+          show(data.message || `Deployment ${data.deployment_id} created`);
+        }
         refresh();
       } catch (e) { show(e.message, false); }
     }

@@ -44,6 +44,8 @@ class KernelStrategy(RealTimeStrategy): # Inherit from RealTimeStrategy
 
         # Position tracking (simple, per instance) - could be more sophisticated
         self.current_position = 0 # 0: flat, >0: long qty, <0: short qty (if supported)
+        self.avg_entry = 0.0
+        self.stop_loss_pct = float(self.params.get("stop_loss_pct", 0) or 0)
         self._last_signal_bar_time = None
 
     def generate_desc(self):
@@ -107,6 +109,20 @@ class KernelStrategy(RealTimeStrategy): # Inherit from RealTimeStrategy
         except ValueError:
             logger.warning(f"Could not parse price from tick. price_str='{price_str}', token_symbol='{token_details.get('symbol', 'N/A')}'", exc_info=True)
             return None
+
+        if (
+            self.current_position > 0
+            and self.stop_loss_pct > 0
+            and self.avg_entry > 0
+            and price <= self.avg_entry * (1 - self.stop_loss_pct / 100.0)
+        ):
+            return {
+                "action": "sell",
+                "quantity": self.current_position,
+                "price": price,
+                "order_type": "LIMIT",
+                "reason": "stop_loss",
+            }
 
         # Timestamp handling (prefer exchange_timestamp if available)
         ts_value = tick_data.get('exchange_timestamp') or tick_data.get('feed_timestamp') or tick_data.get('ft')
@@ -202,10 +218,18 @@ class KernelStrategy(RealTimeStrategy): # Inherit from RealTimeStrategy
         """Update local position only after the executor reports a successful fill."""
         quantity = int(trade_signal.get('quantity') or 0)
         action = (trade_signal.get('action') or '').lower()
+        fill_price = float(trade_signal.get("price") or 0)
         if action == 'buy':
-            self.current_position += quantity
+            new_qty = self.current_position + quantity
+            if new_qty > 0 and fill_price:
+                self.avg_entry = (
+                    (self.avg_entry * self.current_position) + (fill_price * quantity)
+                ) / new_qty
+            self.current_position = new_qty
         elif action == 'sell':
-            self.current_position -= quantity
+            self.current_position = max(self.current_position - quantity, 0)
+            if self.current_position == 0:
+                self.avg_entry = 0.0
 
     # --- Backtesting related methods (can be kept for separate backtesting if needed) ---
     # These methods would use self.data (a DataFrame passed during backtest)

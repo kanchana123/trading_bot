@@ -8,8 +8,11 @@ The running product is a FastAPI server, a SQLite store, and a static dashboard.
 
 | Path | Role |
 | --- | --- |
-| `BollingerBand` | Registered for **backtest only** |
-| `KernelMomentum` | Registered for **backtest and realtime** (virtual or real) |
+| `BollingerBand` | Mean reversion. **Backtest, paper, and real** |
+| `KernelMomentum` | Kernel breakout with optional stop-loss. **Backtest, paper, and real** |
+| `SMACrossover` | Fast/slow SMA trend follow. **Backtest, paper, and real** |
+| `RSIReversion` | RSI oversold/overbought reclaim. **Backtest, paper, and real** |
+| `LowRiskCombo` | Kernel or Bollinger entry with RSI cap and a tight stop. **Backtest, paper, and real** |
 | `strategies/low_risk_llm_equity/` | Standalone LLM backtest script (sandbox + news + kernel). Not exposed on the API |
 | `dqn_trader`, `legacy_dqn_trader`, `RL_google_colab`, `RL_RNN_Intraday`, `LLM_Risk_Management`, `options_combinations`, `GPT_RL.py` | Research / notebook experiments. Not imported by `main.py` |
 
@@ -18,7 +21,7 @@ The running product is a FastAPI server, a SQLite store, and a static dashboard.
 - Named strategy instances with JSON params stored in SQLite
 - Historical backtest via Angel candle API; orders and `end_value` persisted on a portfolio
 - Virtual (paper) and real deployments on websocket ticks
-- Static dashboard at `/` to create strategies, run backtests, and inspect orders
+- Static dashboard at `/` to create strategies, run backtests, deploy paper or live, and inspect orders
 - Optional `X-API-Key` on mutating routes; real trading requires that key plus an active Angel session
 
 ## System design
@@ -48,8 +51,11 @@ flowchart TB
   end
 
   subgraph strategies [Strategies]
-    BB[BollingerBand - backtest]
-    KM[KernelMomentum - backtest + RT]
+    BB[BollingerBand]
+    KM[KernelMomentum]
+    SMA[SMACrossover]
+    RSI[RSIReversion]
+    COMBO[LowRiskCombo]
   end
 
   subgraph persistence [Local store]
@@ -76,9 +82,16 @@ flowchart TB
   DM --> DB
   BT --> BB
   BT --> KM
+  BT --> SMA
+  BT --> RSI
+  BT --> COMBO
   BT --> HTTP
   BT --> OM
+  RT --> BB
   RT --> KM
+  RT --> SMA
+  RT --> RSI
+  RT --> COMBO
   RT --> WS
   RT --> EX
   EX --> OM
@@ -125,7 +138,7 @@ sequenceDiagram
   participant API as FastAPI
   participant RT as RealtimeTrader thread
   participant WS as AngelWebSocketClient
-  participant S as KernelStrategy
+  participant S as DualMode / Kernel strategy
   participant EX as TradeExecutor
   participant DB as SQLite
   participant B as Angel One
@@ -261,8 +274,9 @@ pytest
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
 | GET | `/` | no | Dashboard |
-| GET | `/api/health` | no | Angel session + realtime running + whether API key is required |
-| GET | `/api/strategies/objects` | no | `BollingerBand`, `KernelMomentum` |
+| GET | `/api/health` | no | Angel session, realtime running, API key flag, registered strategy names |
+| GET | `/api/strategies/objects` | no | Class names: `BollingerBand`, `KernelMomentum`, `SMACrossover`, `RSIReversion`, `LowRiskCombo` |
+| GET | `/api/strategies/catalog` | no | Names, labels, `modes` (`backtest` / `virtual` / `real`), default params |
 | POST | `/api/strategies/create` | yes | `{name, strategy_class, params}` |
 | GET | `/api/strategies/db` | no | Saved instances |
 | GET | `/api/portfolios` | no | Optional `?strategy_id=` |
@@ -270,7 +284,7 @@ pytest
 | POST | `/api/backtest` | yes | Creates portfolio, runs backtest, stores orders and `end_value` |
 | GET | `/api/deployments` | no | All deployments |
 | GET | `/api/deployments/{id}` | no | One deployment |
-| POST | `/api/deployments` | yes | `{portfolio_id, strategy_id, token_subscriptions, trading_mode}` |
+| POST | `/api/deployments` | yes | `{portfolio_id, strategy_id, token_subscriptions, trading_mode}` — `virtual` (paper) or `real` |
 | PUT | `/api/deployments/{id}/activate` | yes | Reloads subscriptions if the trader is running |
 | PUT | `/api/deployments/{id}/deactivate` | yes | Same reload behavior |
 | PUT | `/api/deployments/{id}/tokens` | yes | Replace websocket token list |
@@ -281,11 +295,20 @@ Auth = `X-API-Key` when `TRADING_BOT_API_KEY` is set. If that env var is empty, 
 
 ## How a strategy plugs in
 
-**Backtest** (`base_models/strategy.py`): implement `process_data`, `should_buy`, `should_sell`, `select_quantity`, then register the class in `BACKTEST_STRATEGY_CLASSES` in `main.py`.
+Register once in `strategies/registry.py` (`STRATEGY_CATALOG`). Each entry has a backtest class, a realtime class, allowed modes, and default params. The API uses that catalog for `POST /api/strategies/create`, `POST /api/backtest`, and `POST /api/deployments`.
 
-**Realtime** (`strategies/base_strategy_rt.py`): implement `on_new_tick` (return a trade dict or `None`). Register in `STRATEGY_CLASS_MAP` in `realtime/realtime_trader.py`. Position size should change only in `confirm_fill` after `TradeExecutor` succeeds.
+**Preferred path** (`strategies/dual_mode.py`): subclass `DualModeStrategy` and implement `process_data`, `should_buy`, `should_sell`. The same class runs in backtests (bar-by-bar) and on live ticks (ticks are aggregated into bars, then those methods run). Optional `stop_loss_pct` fires on ticks. `position_fraction` sizes from portfolio `capital` in paper/live mode.
+
+**Split path** (`KernelMomentum`): `KernelBacktestAdapter` for backtests and `KernelStrategy.on_new_tick` for ticks. Position size should change only in `confirm_fill` after `TradeExecutor` succeeds.
 
 OHLC columns are normalized to `Open` / `High` / `Low` / `Close` / `Volume` before indicators run.
+
+Typical API flow:
+
+1. `GET /api/strategies/catalog` and `POST /api/strategies/create` with a class name and params.
+2. `POST /api/backtest` to persist a portfolio and historical orders (`order_type=backtest`).
+3. `POST /api/deployments` with `trading_mode=virtual` (paper) or `real`, then `PUT /api/deployments/{id}/activate`.
+4. `POST /api/realtime/start` so websocket ticks drive the same strategy. Paper fills stay in SQLite; real mode also calls Angel `placeOrder`.
 
 ## LLM equity script
 

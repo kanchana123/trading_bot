@@ -33,7 +33,7 @@ def test_kernel_adapter_momentum_is_causal():
 def test_confirm_fill_updates_position_only_on_success_path():
     strategy = KernelStrategy(params={"quantity": 3})
     assert strategy.current_position == 0
-    strategy.confirm_fill({"action": "buy", "quantity": 3})
+    strategy.confirm_fill({"action": "buy", "quantity": 3, "price": 100.0})
     assert strategy.current_position == 3
     strategy.confirm_fill({"action": "sell", "quantity": 3})
     assert strategy.current_position == 0
@@ -88,3 +88,17 @@ def test_on_new_tick_emits_at_most_one_signal_per_bar():
     )
     assert first is not None
     assert second is None
+
+
+def test_kernel_stop_loss_on_tick():
+    strategy = KernelStrategy(params={"quantity": 1, "stop_loss_pct": 1.0})
+    strategy.confirm_fill({"action": "buy", "quantity": 1, "price": 100.0})
+    signal = strategy.on_new_tick(
+        {"ltp": "98.5", "exchange_timestamp": "2024-01-01T09:17:10"},
+        TOKEN,
+    )
+    assert signal is not None
+    assert signal["action"] == "sell"
+    assert signal["reason"] == "stop_loss"
+    assert strategy.current_position == 1
+

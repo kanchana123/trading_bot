@@ -44,13 +44,43 @@ def test_health(client):
     assert body["ok"] is True
     assert body["api_key_required"] is True
     assert body["angel_session"] is False
+    assert "BollingerBand" in body["strategies"]
+    assert "SMACrossover" in body["strategies"]
+    assert "RSIReversion" in body["strategies"]
+    assert "LowRiskCombo" in body["strategies"]
 
 
 def test_strategy_objects(client):
     res = client.get("/api/strategies/objects")
     assert res.status_code == 200
-    assert "BollingerBand" in res.json()
-    assert "KernelMomentum" in res.json()
+    names = res.json()
+    for expected in (
+        "BollingerBand",
+        "KernelMomentum",
+        "SMACrossover",
+        "RSIReversion",
+        "LowRiskCombo",
+    ):
+        assert expected in names
+
+
+def test_strategy_catalog(client):
+    res = client.get("/api/strategies/catalog")
+    assert res.status_code == 200
+    catalog = res.json()
+    names = {row["name"] for row in catalog}
+    assert names == {
+        "BollingerBand",
+        "KernelMomentum",
+        "SMACrossover",
+        "RSIReversion",
+        "LowRiskCombo",
+    }
+    for row in catalog:
+        assert "backtest" in row["modes"]
+        assert "virtual" in row["modes"]
+        assert "real" in row["modes"]
+        assert isinstance(row["default_params"], dict)
 
 
 def test_create_strategy_requires_api_key(client):
@@ -189,7 +219,7 @@ def test_deployment_and_realtime_guards(client, monkeypatch):
         headers=_auth(),
     )
     bb_id = bollie.json()["strategy_id"]
-    rejected = client.post(
+    paper_bb = client.post(
         "/api/deployments",
         json={
             "portfolio_id": portfolio_id,
@@ -201,7 +231,7 @@ def test_deployment_and_realtime_guards(client, monkeypatch):
         },
         headers=_auth(),
     )
-    assert rejected.status_code == 400
+    assert paper_bb.status_code == 201
 
     real = client.post(
         "/api/deployments",
@@ -238,3 +268,57 @@ def test_deployment_and_realtime_guards(client, monkeypatch):
 
     start = client.post("/api/realtime/start", headers=_auth())
     assert start.status_code == 503
+
+
+def test_each_catalog_strategy_creates_and_deploys_virtual(client, monkeypatch):
+    import main
+
+    class _FakeBacktest:
+        def __init__(self, *args, **kwargs):
+            self.portfolio_value_history = [100000.0]
+            self.orders = []
+
+        def run(self):
+            return []
+
+    monkeypatch.setattr(main, "Backtest", _FakeBacktest)
+    catalog = client.get("/api/strategies/catalog").json()
+    for row in catalog:
+        created = client.post(
+            "/api/strategies/create",
+            json={"name": f"inst-{row['name']}", "strategy_class": row["name"], "params": {}},
+            headers=_auth(),
+        )
+        assert created.status_code == 200, row["name"]
+        strategy_id = created.json()["strategy_id"]
+        stored = next(
+            item for item in client.get("/api/strategies/db").json() if item["id"] == strategy_id
+        )
+        assert stored["strategy_class_name"] == row["name"]
+        bt = client.post(
+            "/api/backtest",
+            json={
+                "strategy_id": strategy_id,
+                "stock": "RELIANCE-EQ",
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-02",
+                "portfolio_value": 100000,
+                "portfolio_name": f"port-{row['name']}",
+            },
+            headers=_auth(),
+        )
+        assert bt.status_code == 200, row["name"]
+        deployed = client.post(
+            "/api/deployments",
+            json={
+                "portfolio_id": bt.json()["portfolio_id"],
+                "strategy_id": strategy_id,
+                "token_subscriptions": [
+                    {"instrumentToken": "2885", "symbol": "RELIANCE-EQ", "exchange": "NSE_EQ"}
+                ],
+                "trading_mode": "virtual",
+            },
+            headers=_auth(),
+        )
+        assert deployed.status_code == 201, row["name"]
+
