@@ -106,14 +106,20 @@ def resume_graph(
     trade_executor=None,
     audit=None,
 ) -> AgentState:
-    state.operator_id = operator_id
-    state.human_decision = human_decision
-    if human_decision != "approve":
-        state.route = RouteDecision.REJECT
-        state.reject_reason = "human_rejected"
+    with TRACER.start_as_current_span(
+        "resume_graph",
+        run_id=state.run_id,
+        decision=human_decision,
+        operator_id=operator_id,
+    ):
+        state.operator_id = operator_id
+        state.human_decision = human_decision
+        if human_decision != "approve":
+            state.route = RouteDecision.REJECT
+            state.reject_reason = "human_rejected"
+            return finish_execution(state, trade_executor=trade_executor, audit=audit)
+        state.route = RouteDecision.APPROVE
         return finish_execution(state, trade_executor=trade_executor, audit=audit)
-    state.route = RouteDecision.APPROVE
-    return finish_execution(state, trade_executor=trade_executor, audit=audit)
 
 
 def build_langgraph(trade_executor=None):

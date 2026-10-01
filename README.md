@@ -259,6 +259,11 @@ pip install -r requirements.txt
 | `ANGEL_TOTP` | TOTP secret |
 | `OPENAI_API_KEY` | LLM equity script only |
 | `TRADING_BOT_API_KEY` | Protects create / backtest / deploy / realtime routes |
+| `LANGSMITH_TRACING` | `true` to send traces (also set `LANGCHAIN_TRACING_V2` for LangGraph) |
+| `LANGSMITH_API_KEY` | LangSmith API key (`lsv2_…`) |
+| `LANGSMITH_PROJECT` | Smith project name (default `trading-bot-v2`) |
+| `LANGSMITH_ENDPOINT` | Smith API host (default `https://api.smith.langchain.com`) |
+| `LANGSMITH_WORKSPACE_ID` | Optional org / workspace id |
 
 Real trading is rejected if `TRADING_BOT_API_KEY` is unset or Angel is offline.
 
@@ -280,6 +285,12 @@ Server: `http://127.0.0.1:9000`. Open that URL for the dashboard. When `TRADING_
 
 ```sh
 pytest
+```
+
+7. Local RAG + graph eval (writes How it works metrics):
+
+```sh
+python eval/run_local.py
 ```
 
 ## API
@@ -350,6 +361,38 @@ flowchart LR
 - **Real** calls Angel `placeOrder` now as LIMIT / INTRADAY if the session is live. A closed market or bad token is a broker reject, not a next-session queue.
 
 Fixture research exists for `RELIANCE-EQ` and `ICICIBANK-EQ`. Start a run from the desk, inspect citations and policy in the inspector, then approve or reject from the queue. Audit rows replay the graph snapshot.
+
+## Local eval (2026-10-01)
+
+Ran `python eval/run_local.py` against the fixture 10-K/10-Q corpus (6 chunks), the HITL graph, LangGraph compile, and LangSmith export. RAG scores are overlap-style (Ragas-like).
+
+| Metric | Value |
+| --- | --- |
+| RAG symbol precision@3 | **100%** |
+| Research grounded rate | **100%** |
+| Faithfulness (grounded brief) | **1.00** |
+| Faithfulness (fabricated claim) | **0.00** |
+| Mandate relevance | 0.44 |
+| Citations per run | 3.0 |
+| Injection blocked | pass |
+| LangGraph available | pass |
+| LangGraph interrupt before `execute_order` | pass |
+| Local runner HITL pause | **100%** |
+| Fill before approve | no |
+| Paper fill after approve | **100%** |
+| Policy caps oversize | pass |
+| Span p95 | 8.84 ms (21 spans) |
+| pytest `eval/` + `tests/test_v2_agentic.py` | **8 passed** |
+| LangSmith tracing | **on** (`trading-bot-v2`) |
+| LangSmith recent runs fetched | 20+ |
+
+Re-run:
+
+```sh
+python eval/run_local.py
+```
+
+That refreshes `eval/metrics.json` and `web/src/evalMetrics.json` (the How it works table). Then `pytest eval/test_ragas_eval.py tests/test_v2_agentic.py`.
 
 ## V2 multi-agent graph
 

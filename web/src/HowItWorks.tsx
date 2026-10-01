@@ -1,4 +1,13 @@
 import ArchitectureDiagram from "./ArchitectureDiagram";
+import metrics from "./evalMetrics.json";
+
+function pct(value: number) {
+  return `${(value * 100).toFixed(0)}%`;
+}
+
+function yn(value: boolean) {
+  return value ? "pass" : "fail";
+}
 
 export default function HowItWorks() {
   return (
@@ -8,6 +17,136 @@ export default function HowItWorks() {
         The investment desk runs a governed graph. Models may retrieve text and propose a trade.
         They never send an order. A rule engine and a human sit in front of execution.
       </p>
+
+      <h2>Local eval ({metrics.evaluated_at})</h2>
+      <p>
+        Fixture corpus ({metrics.rag.corpus_chunks} chunks, {metrics.rag.symbols.join(" / ")}).
+        Overlap faithfulness, hybrid retrieval@3, HITL graph, LangGraph compile, LangSmith export.
+        Re-run with <code>python eval/run_local.py</code>.
+      </p>
+      <div className="metrics">
+        <section>
+          <h3>RAG</h3>
+          <table>
+            <tbody>
+              <tr>
+                <th>Symbol precision@3</th>
+                <td className="ok">{pct(metrics.rag.symbol_precision_at_3)}</td>
+              </tr>
+              <tr>
+                <th>Research grounded</th>
+                <td className="ok">{pct(metrics.rag.research_grounded_rate)}</td>
+              </tr>
+              <tr>
+                <th>Faithfulness (grounded brief)</th>
+                <td className="ok">{metrics.rag.faithfulness_grounded.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <th>Faithfulness (fabricated claim)</th>
+                <td className="ok">{metrics.rag.faithfulness_fabricated.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <th>Mandate relevance</th>
+                <td>{metrics.rag.answer_relevance.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <th>Citations / run</th>
+                <td>{metrics.rag.citation_count_avg.toFixed(1)}</td>
+              </tr>
+              <tr>
+                <th>Injection blocked</th>
+                <td className={metrics.rag.injection_blocked ? "ok" : "warn"}>
+                  {yn(metrics.rag.injection_blocked)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <h3>Graph / LangGraph</h3>
+          <table>
+            <tbody>
+              <tr>
+                <th>LangGraph available</th>
+                <td className={metrics.graph.langgraph_available ? "ok" : "warn"}>
+                  {yn(metrics.graph.langgraph_available)}
+                </td>
+              </tr>
+              <tr>
+                <th>LangGraph interrupt before execute</th>
+                <td className={metrics.graph.langgraph_interrupt_before_execute ? "ok" : "warn"}>
+                  {yn(metrics.graph.langgraph_interrupt_before_execute)}
+                </td>
+              </tr>
+              <tr>
+                <th>Local runner HITL pause</th>
+                <td className="ok">{pct(metrics.graph.local_interrupt_rate)}</td>
+              </tr>
+              <tr>
+                <th>Fill before approve</th>
+                <td className={!metrics.graph.execution_before_approve ? "ok" : "warn"}>
+                  {metrics.graph.execution_before_approve ? "yes" : "no"}
+                </td>
+              </tr>
+              <tr>
+                <th>Paper fill after approve</th>
+                <td className="ok">
+                  {metrics.graph.paper_fill_after_approve == null
+                    ? "n/a"
+                    : pct(metrics.graph.paper_fill_after_approve)}
+                </td>
+              </tr>
+              <tr>
+                <th>Policy caps oversize</th>
+                <td className={metrics.graph.policy_caps_oversize ? "ok" : "warn"}>
+                  {yn(metrics.graph.policy_caps_oversize)}
+                </td>
+              </tr>
+              <tr>
+                <th>Span p95</th>
+                <td>{metrics.graph.p95_span_ms.toFixed(2)} ms ({metrics.graph.span_count} spans)</td>
+              </tr>
+              <tr>
+                <th>pytest (eval + v2)</th>
+                <td className={metrics.pytest.passed ? "ok" : "warn"}>
+                  {metrics.pytest.passed ? "8 passed" : "failed"}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <h3>LangSmith</h3>
+          <table>
+            <tbody>
+              <tr>
+                <th>Tracing</th>
+                <td className={metrics.langsmith.tracing_enabled ? "ok" : "warn"}>
+                  {metrics.langsmith.tracing_enabled ? "on" : "off"}
+                </td>
+              </tr>
+              <tr>
+                <th>Project</th>
+                <td>{metrics.langsmith.project}</td>
+              </tr>
+              <tr>
+                <th>Recent runs fetched</th>
+                <td className={metrics.langsmith.recent_runs_fetched > 0 ? "ok" : "warn"}>
+                  {metrics.langsmith.recent_runs_fetched >= 20
+                    ? "20+"
+                    : metrics.langsmith.recent_runs_fetched}
+                </td>
+              </tr>
+              <tr>
+                <th>Export error</th>
+                <td className={metrics.langsmith.error ? "warn" : "ok"}>
+                  {metrics.langsmith.error || "none"}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
 
       <h2>Architecture</h2>
       <p>

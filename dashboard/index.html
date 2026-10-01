@@ -97,6 +97,12 @@
     }
     .arch .mermaid { margin: 0; }
     .arch svg { max-width: 100%; height: auto; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .metrics section { margin: 0; }
+    .metrics th { color: var(--muted); font-weight: 500; width: 62%; }
+    .metrics .ok { color: var(--ok); }
+    .metrics tbody tr { cursor: default; }
+    @media (max-width: 900px) { .metrics { grid-template-columns: 1fr; } }
     #deskView { display: grid; gap: 20px; }
     #deskView[hidden], #howView[hidden] { display: none; }
   </style>
@@ -122,6 +128,44 @@
       <section>
         <h2>How it works</h2>
         <p class="lede">The platform has two surfaces. The original dashboard backtests and deploys strategies. The v2 investment desk runs a governed graph: models may retrieve text and propose a trade, but they never send an order. A rule engine and a human sit in front of execution.</p>
+        <h2>Local eval (2026-10-01)</h2>
+        <p>Fixture corpus (6 chunks, RELIANCE-EQ / ICICIBANK-EQ). LangGraph compile + LangSmith export. Re-run with <code>python eval/run_local.py</code>.</p>
+        <div class="metrics">
+          <section>
+            <h2>RAG</h2>
+            <table>
+              <tr><th>Symbol precision@3</th><td class="ok">100%</td></tr>
+              <tr><th>Research grounded</th><td class="ok">100%</td></tr>
+              <tr><th>Faithfulness (grounded brief)</th><td class="ok">1.00</td></tr>
+              <tr><th>Faithfulness (fabricated claim)</th><td class="ok">0.00</td></tr>
+              <tr><th>Mandate relevance</th><td>0.44</td></tr>
+              <tr><th>Citations / run</th><td>3.0</td></tr>
+              <tr><th>Injection blocked</th><td class="ok">pass</td></tr>
+            </table>
+          </section>
+          <section>
+            <h2>Graph / LangGraph</h2>
+            <table>
+              <tr><th>LangGraph available</th><td class="ok">pass</td></tr>
+              <tr><th>LangGraph interrupt before execute</th><td class="ok">pass</td></tr>
+              <tr><th>Local runner HITL pause</th><td class="ok">100%</td></tr>
+              <tr><th>Fill before approve</th><td class="ok">no</td></tr>
+              <tr><th>Paper fill after approve</th><td class="ok">100%</td></tr>
+              <tr><th>Policy caps oversize</th><td class="ok">pass</td></tr>
+              <tr><th>Span p95</th><td>8.84 ms (21 spans)</td></tr>
+              <tr><th>pytest (eval + v2)</th><td class="ok">8 passed</td></tr>
+            </table>
+          </section>
+          <section>
+            <h2>LangSmith</h2>
+            <table>
+              <tr><th>Tracing</th><td class="ok">on</td></tr>
+              <tr><th>Project</th><td>trading-bot-v2</td></tr>
+              <tr><th>Recent runs fetched</th><td class="ok">20+</td></tr>
+              <tr><th>Export error</th><td class="ok">none</td></tr>
+            </table>
+          </section>
+        </div>
         <h2>Architecture</h2>
         <p>Clients talk only to FastAPI. The v2 graph can retrieve and propose. Classic backtest and realtime share TradeExecutor and SQLite.</p>
         <figure class="arch">

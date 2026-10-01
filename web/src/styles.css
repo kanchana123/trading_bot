@@ -93,7 +93,14 @@ button.danger { background: var(--danger); color: #1a0b0c; }
   padding: 16px;
 }
 
-.notice { grid-column: 1 / -1; margin: 0; font-size: 13px; }
+.notice {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  max-height: 4.5em;
+  overflow: hidden;
+}
 .notice.ok { color: var(--ok); }
 .notice.warn { color: var(--warn); }
 
@@ -220,6 +227,24 @@ tbody tr:hover td { color: var(--accent); }
   color: var(--muted);
 }
 
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.metrics section {
+  margin: 0;
+}
+
+.metrics table { font-size: 13px; }
+.metrics th { color: var(--muted); font-weight: 500; width: 62%; }
+.metrics td { font-variant-numeric: tabular-nums; }
+.metrics tbody tr { cursor: default; }
+.metrics tbody tr:hover td { color: inherit; }
+.metrics .ok { color: var(--ok); }
+.metrics .warn { color: var(--warn); }
+
 @media (max-width: 900px) {
-  .top, .run-form, .grid { grid-template-columns: 1fr; }
+  .top, .run-form, .grid, .metrics { grid-template-columns: 1fr; }
 }

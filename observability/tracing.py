@@ -1,9 +1,55 @@
 import logging
+import os
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from dotenv import load_dotenv
+
+_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(_ENV_FILE)
+
 logger = logging.getLogger("trading_bot.otel")
+
+
+def _clean(value: Optional[str]) -> str:
+    return (value or "").strip().strip('"').strip("'")
+
+
+def configure_langsmith() -> bool:
+    """Enable LangSmith from .env. No-op under pytest so tests stay offline."""
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    key = _clean(os.getenv("LANGSMITH_API_KEY"))
+    flag = _clean(os.getenv("LANGSMITH_TRACING")).lower()
+    if not key or flag not in {"1", "true", "yes", "on"}:
+        return False
+    project = _clean(os.getenv("LANGSMITH_PROJECT")) or "trading-bot-v2"
+    endpoint = _clean(os.getenv("LANGSMITH_ENDPOINT")) or "https://api.smith.langchain.com"
+    os.environ["LANGSMITH_API_KEY"] = key
+    os.environ["LANGCHAIN_API_KEY"] = key
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGSMITH_PROJECT"] = project
+    os.environ["LANGCHAIN_PROJECT"] = project
+    os.environ["LANGSMITH_ENDPOINT"] = endpoint
+    workspace = _clean(os.getenv("LANGSMITH_WORKSPACE_ID"))
+    if workspace:
+        os.environ["LANGSMITH_WORKSPACE_ID"] = workspace
+    return True
+
+
+LANGSMITH_ON = configure_langsmith()
+
+
+def tracing_enabled() -> bool:
+    global LANGSMITH_ON
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    if not LANGSMITH_ON:
+        LANGSMITH_ON = configure_langsmith()
+    return LANGSMITH_ON
 
 
 class Span:
@@ -38,8 +84,18 @@ class Span:
         }
 
 
+def _safe_meta(attributes: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key, value in attributes.items():
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            out[key] = value
+        else:
+            out[key] = str(value)
+    return out
+
+
 class Tracer:
-    """OpenTelemetry-shaped tracer. Exports to logs; OTLP/LangSmith optional."""
+    """Local spans plus LangSmith runs when LANGSMITH_TRACING=true and a key is set."""
 
     def __init__(self):
         self.spans: List[Span] = []
@@ -48,9 +104,31 @@ class Tracer:
     def start_as_current_span(self, name: str, **attributes: Any) -> Iterator[Span]:
         span = Span(name, attributes)
         self.spans.append(span)
+        meta = _safe_meta(attributes)
+        ctx = nullcontext()
+        if tracing_enabled():
+            try:
+                from langsmith.run_helpers import trace
+
+                ctx = trace(
+                    name=name,
+                    run_type="chain",
+                    inputs=meta,
+                    metadata=meta,
+                    tags=["trading-bot", "v2"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("LangSmith trace context failed: %s", exc)
+                ctx = nullcontext()
         try:
-            yield span
-            span.finish("ok")
+            with ctx as run:
+                yield span
+                if run is not None:
+                    try:
+                        run.end(outputs={"status": "ok", **meta})
+                    except Exception:
+                        pass
+                span.finish("ok")
         except Exception as exc:
             span.finish("error", str(exc))
             raise

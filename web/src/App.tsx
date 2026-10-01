@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, getApiKey, getOperator, setApiKey, setOperator } from "./api";
+import { api, getApiKey, getOperator, isApiUnavailable, setApiKey, setOperator } from "./api";
 import Desk from "./Desk";
 import "./styles.css";
 import type { AuditRow, GraphEdge, Health, PendingRow, RunDump } from "./types";
@@ -39,9 +39,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refresh().catch((err: Error) => show(err.message, false));
+    let live = true;
+    refresh().catch((err: Error) => {
+      show(err.message, false);
+      if (isApiUnavailable(err)) live = false;
+    });
     const timer = window.setInterval(() => {
-      refresh().catch(() => undefined);
+      if (!live) return;
+      refresh().catch((err: Error) => {
+        if (isApiUnavailable(err)) live = false;
+      });
     }, 8000);
     return () => window.clearInterval(timer);
   }, [refresh]);

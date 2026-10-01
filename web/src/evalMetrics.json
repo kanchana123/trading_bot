@@ -1,0 +1,39 @@
+{
+  "evaluated_at": "2026-10-01",
+  "method": "Local fixture corpus + overlap faithfulness + HITL graph runner + LangSmith",
+  "rag": {
+    "corpus_chunks": 6,
+    "symbols": [
+      "RELIANCE-EQ",
+      "ICICIBANK-EQ"
+    ],
+    "symbol_precision_at_3": 1.0,
+    "research_grounded_rate": 1.0,
+    "faithfulness_grounded": 1.0,
+    "faithfulness_fabricated": 0.0,
+    "answer_relevance": 0.438,
+    "citation_count_avg": 3.0,
+    "injection_blocked": true
+  },
+  "graph": {
+    "langgraph_available": true,
+    "langgraph_interrupt_before_execute": true,
+    "langgraph_error": null,
+    "local_interrupt_rate": 1.0,
+    "execution_before_approve": false,
+    "paper_fill_after_approve": 1.0,
+    "policy_caps_oversize": true,
+    "p95_span_ms": 8.84,
+    "span_count": 21
+  },
+  "langsmith": {
+    "tracing_enabled": true,
+    "project": "trading-bot-v2",
+    "recent_runs_fetched": 20,
+    "error": null
+  },
+  "pytest": {
+    "exit_code": 0,
+    "passed": true
+  }
+}
