@@ -56,7 +56,7 @@ htmlcov/
 *.pickle
 *.joblib
 *.pt
-*.pth
+# *.pth
 *.ckpt
 *.h5
 *.onnx
